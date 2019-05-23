@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+
+from collections import OrderedDict
+import subprocess
+import argparse
+import shlex
+import sys
+
+def run_command(cmd, allow_fail=False):
+    shlexed = shlex.split(cmd)
+    proc = subprocess.Popen(shlexed, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    out, err = proc.communicate()
+
+    retcode = proc.returncode
+    if retcode and not allow_fail:
+        sys.stderr.write(err.decode())
+        sys.exit(1)
+
+    return out.decode().strip()
+
+def clear_branch_description(branch):
+    desc_cmd = "git config --unset branch.{0}.description"
+
+    return run_command(desc_cmd.format(branch))
+
+def set_branch_description(branch, description):
+    desc_cmd = "git config branch.{0}.description '{1}'"
+
+    return run_command(desc_cmd.format(branch, description))
+
+def find_branch_description(branch):
+    desc_cmd = "git config branch.{0}.description"
+
+    return run_command(desc_cmd.format(branch), allow_fail=True)
+
+def discover_branch_data(branch=None):
+    fmt=('%(refname:short): {\"id\": %(objectname:short),'
+                            '\"current\":%(HEAD),'
+                            '\"committerdate\": %(committerdate:short),'
+                            '\"authordate\":%(authordate:short)},')
+    ref='refs/heads'
+    if branch:
+        ref += '/{0}'.format(branch)
+    cmd="git for-each-ref --python --format='{0}' {1}".format(fmt, ref)
+
+    out_str = run_command(cmd)
+    dict_repr = '{' + out_str + '}'
+    branches = eval(dict_repr)
+
+    desc_cmd = "git config branch.{0}.description"
+
+    for branch, data in branches.items():
+        data['description'] = find_branch_description(branch)
+
+    return branches
+
+def generate_table(branches, fuller=False):
+    header = ['c', 'branch', 'description']
+    if fuller:
+        header.extend(['id', 'committerdate', 'authordate'])
+
+    table = []
+    table.append(header)
+
+    for branch, data in branches.items():
+        row = [data['current'], branch, data['description']]
+        if fuller:
+            row.extend([data['id'], data['committerdate'], data['authordate']])
+
+        table.append(row)
+
+    return table
+
+def calculate_row_widths(values):
+    widths = OrderedDict()
+    for value in values:
+        for position, data in enumerate(value):
+            curr_max = widths.get(position, 0)
+            curr_length = len(data)
+
+            if curr_length > curr_max:
+                widths[position] = curr_length
+
+    return widths.values()
+
+def print_row(values, widths, fill=' '):
+    for value, length in zip(values, widths):
+        print(value.ljust(length, fill), end=' ')
+    print()
+
+def tabulate(branches, fuller=False):
+    table = generate_table(branches, fuller)
+    widths = calculate_row_widths(table)
+    header, rows = table[0], table[1:]
+
+    print_row(header, widths)
+    print_row([''] * len(header), widths, '~')
+
+    for row in rows:
+        print_row(row, widths)
+
+def parse_arguments():
+    description = 'A simple script to manipulate git branch descriptions'
+    parser = argparse.ArgumentParser(description=description)
+
+    sub = parser.add_subparsers(
+            help='describe branch(es), set description, or clear branch',
+            dest='command')
+    sub.required=True
+
+    describe = sub.add_parser('describe', help='describe a branch')
+    describe.add_argument('branch', help='branch to lookup description for',
+                          nargs='?')
+    describe.add_argument('--fuller', help='fuller output',
+                          action='store_true')
+
+    etch = sub.add_parser('etch', help='set branch description')
+    etch.add_argument('branch', help='branch to set description for')
+    etch.add_argument('description', help='description to set')
+
+    clear = sub.add_parser('clear', help='clear branch description')
+    clear.add_argument('branch', help='branch to clear description for')
+
+    return parser.parse_args()
+
+def main():
+    args = parse_arguments()
+
+    if args.command == 'describe':
+        branches = discover_branch_data(args.branch)
+        tabulate(branches, args.fuller)
+    elif args.command == 'etch':
+        set_branch_description(args.branch, args.description)
+    else:
+        clear_branch_description(args.branch)
+
+if __name__ == "__main__":
+    exit(main())
