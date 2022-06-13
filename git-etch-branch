@@ -34,7 +34,7 @@ def find_branch_description(branch):
 
     return run_command(desc_cmd.format(branch), allow_fail=True)
 
-def discover_branch_data(branch=None):
+def discover_branch_data(branch=None, etched_only=False):
     fmt=('%(refname:short): {\"id\": %(objectname:short),'
                             '\"current\":%(HEAD),'
                             '\"committerdate\": %(committerdate:short),'
@@ -48,12 +48,16 @@ def discover_branch_data(branch=None):
     dict_repr = '{' + out_str + '}'
     branches = eval(dict_repr)
 
-    desc_cmd = "git config branch.{0}.description"
-
+    discovered = {}
     for branch, data in branches.items():
-        data['description'] = find_branch_description(branch)
+        description = find_branch_description(branch)
+        if etched_only and not description:
+            continue
 
-    return branches
+        data['description'] = description
+        discovered[branch] = data
+
+    return discovered
 
 def generate_table(branches, fuller=False):
     header = ['c', 'branch', 'description']
@@ -114,6 +118,8 @@ def parse_arguments():
                           nargs='?')
     describe.add_argument('--fuller', help='fuller output',
                           action='store_true')
+    describe.add_argument('--etched-only', help='only output etched branches',
+                          action='store_true')
 
     etch = sub.add_parser('etch', help='set branch description')
     etch.add_argument('branch', help='branch to set description for')
@@ -128,7 +134,7 @@ def main():
     args = parse_arguments()
 
     if args.command == 'describe':
-        branches = discover_branch_data(args.branch)
+        branches = discover_branch_data(args.branch, args.etched_only)
         tabulate(branches, args.fuller)
     elif args.command == 'etch':
         set_branch_description(args.branch, args.description)
